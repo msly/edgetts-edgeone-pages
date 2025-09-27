@@ -332,8 +332,7 @@ async function fetchNewToken(env) {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": "0",
         "Accept-Encoding": "gzip"
-      },
-      signal: AbortSignal.timeout(DEFAULT_CONFIG.REQUEST_TIMEOUT)
+      }
     });
 
     if (!response.ok) {
@@ -957,8 +956,7 @@ async function getAudioChunk(text, voiceName, rate, pitch, style, outputFormat, 
         "User-Agent": "okhttp/4.5.0",
         "X-Microsoft-OutputFormat": outputFormat
       },
-      body: ssml,
-      signal: AbortSignal.timeout(DEFAULT_CONFIG.REQUEST_TIMEOUT)
+      body: ssml
     });
 
     if (!response.ok) {
