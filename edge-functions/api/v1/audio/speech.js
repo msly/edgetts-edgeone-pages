@@ -337,7 +337,12 @@ async function fetchNewToken(env) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
+      let errorText;
+      try {
+        errorText = await response.text();
+      } catch (textError) {
+        errorText = `无法读取错误响应: ${textError.message}`;
+      }
       throw new TTSError(
         `获取端点失败: ${response.status} ${response.statusText} - ${errorText}`,
         ERROR_CODES.TOKEN_ACQUISITION_FAILED,
@@ -345,7 +350,31 @@ async function fetchNewToken(env) {
       );
     }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (jsonError) {
+      let responseText;
+      try {
+        responseText = await response.text();
+      } catch (textError) {
+        responseText = `无法读取响应文本: ${textError.message}`;
+      }
+      throw new TTSError(
+        `端点响应解析失败: ${jsonError.message}. 响应内容: ${responseText.substring(0, 200)}`,
+        ERROR_CODES.TOKEN_ACQUISITION_FAILED,
+        response.status
+      );
+    }
+
+    if (!data || !data.t || !data.r) {
+      throw new TTSError(
+        `端点响应格式错误: 缺少必要字段 t 或 r. 响应: ${JSON.stringify(data)}`,
+        ERROR_CODES.TOKEN_ACQUISITION_FAILED,
+        400
+      );
+    }
+
     const expiredAt = parseJWTExpiration(data.t);
 
     tokenCache = {
@@ -388,8 +417,16 @@ function parseJWTExpiration(token) {
       decoded = base64Decode(jwt);
     }
 
-    const decodedJwt = JSON.parse(decoded);
-    return decodedJwt.exp || (Date.now() / 1000 + 3600);
+    try {
+      const decodedJwt = JSON.parse(decoded);
+      return decodedJwt.exp || (Date.now() / 1000 + 3600);
+    } catch (jsonError) {
+      log('warn', 'JWT JSON parsing failed', {
+        error: jsonError.message,
+        decoded: decoded.substring(0, 50)
+      });
+      return Date.now() / 1000 + 3600;
+    }
   } catch (e) {
     log('warn', 'JWT parsing failed, using default expiration', { error: e.message });
     return Date.now() / 1000 + 3600;
@@ -925,7 +962,12 @@ async function getAudioChunk(text, voiceName, rate, pitch, style, outputFormat, 
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
+      let errorText;
+      try {
+        errorText = await response.text();
+      } catch (textError) {
+        errorText = `无法读取错误响应: ${textError.message}`;
+      }
       throw new TTSError(
         `Edge TTS API 错误: ${response.status} ${response.statusText} - ${errorText}`,
         ERROR_CODES.TTS_GENERATION_ERROR,
@@ -933,7 +975,25 @@ async function getAudioChunk(text, voiceName, rate, pitch, style, outputFormat, 
       );
     }
 
-    const blob = await response.blob();
+    let blob;
+    try {
+      blob = await response.blob();
+    } catch (blobError) {
+      throw new TTSError(
+        `音频数据读取失败: ${blobError.message}`,
+        ERROR_CODES.TTS_GENERATION_ERROR,
+        500
+      );
+    }
+
+    if (!blob || blob.size === 0) {
+      throw new TTSError(
+        "音频数据为空",
+        ERROR_CODES.TTS_GENERATION_ERROR,
+        500
+      );
+    }
+
     log('info', 'Audio chunk generated successfully', {
       blobSize: blob.size,
       contentType: blob.type
@@ -1193,9 +1253,23 @@ async function handleSpeechRequest(request, env) {
 
   let requestBody;
   try {
-    requestBody = await request.json();
+    const contentType = request.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      return errorResponse(`Content-Type 错误: 期望 application/json，实际 ${contentType || 'undefined'}`, 400, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const text = await request.text();
+    if (!text || text.trim() === '') {
+      return errorResponse("请求体为空", 400, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    try {
+      requestBody = JSON.parse(text);
+    } catch (parseError) {
+      return errorResponse(`JSON 解析错误: ${parseError.message}. 请求内容前100字符: ${text.substring(0, 100)}`, 400, ERROR_CODES.INVALID_REQUEST);
+    }
   } catch (err) {
-    return errorResponse(`JSON 解析错误: ${err.message}`, 400, ERROR_CODES.INVALID_REQUEST);
+    return errorResponse(`请求处理错误: ${err.message}`, 400, ERROR_CODES.INVALID_REQUEST);
   }
 
   // 参数验证
